@@ -1,0 +1,58 @@
+{
+  "hosts" : {
+    "gnode1": {"mac": "10:70:fd:df:a5:aa", "ip": "42.0.0.1"},
+    "gnode2": {"mac": "10:70:fd:df:a4:26", "ip": "42.0.0.2"},
+    "gnode3": {"mac": "94:6d:ae:8c:ad:74", "ip": "42.0.0.3"},
+    "gnode4": {"mac": "94:6d:ae:8c:e4:7c", "ip": "42.0.0.4"},
+    "gnode5": {"mac": "94:6d:ae:8c:e4:8c", "ip": "42.0.0.5"},
+    "gnode6": {"mac": "94:6d:ae:8c:e7:4c", "ip": "42.0.0.6"}
+  },
+  "switch": {
+    "name": "netberg-aurora-710",
+    "tofino": 1,
+    "asic": true,
+    "mac": "42:00:00:00:00:00",
+    "ip": "42.0.0.0",
+    "port": 4242,
+    "flood_mgid": 1,
+    "pipes": [1, 0],
+    "program": {
+      "main": "lib/dpa_switch/tofino_tna/main.p4",
+      "straggle_aware": true,
+      "config": {
+        "straggle_aware": false,
+        "dpa_comm": 1,
+        "dpa_implicit_syn": 0,
+        "dpa_udp_port": 4242,
+        "dpa_pipes": 2,
+        "dpa_exponents": 1,
+        "dpa_reducers": 32,
+        "dpa_reducer_mode": 2,
+        "dpa_slots": 16384,
+        "dpa_sessions": 1,
+        "net_arp_table_size": 512,
+        "net_icmp_table_size": 512,
+        "net_forwarding_table_size": 512
+      }
+    },
+    "ports"     : {
+      "1/0": {"host": "gnode1", "speed": "100", "enable": true, "auto-negotiation": false},
+      "2/0": {"host": "gnode2", "speed": "100", "enable": true, "auto-negotiation": false},
+      "3/0": {"host": "gnode3", "speed": "100", "enable": true, "auto-negotiation": false},
+      "4/0": {"host": "gnode4", "speed": "100", "enable": true, "auto-negotiation": false},
+      "5/0": {"host": "gnode5", "speed": "100", "enable": true, "auto-negotiation": false},
+      "6/0": {"host": "gnode6", "speed": "100", "enable": true, "auto-negotiation": false}
+    },
+    "sessions"  : {
+      "main": {
+        "id": 1,
+        "ports": ["1/0", "2/0", "3/0", "4/0", "5/0", "6/0"],
+        "pool_base": 0,
+        "pool_size": 4096,
+        "straggle_timeout_ms": 1000,
+        "mgid": 2,
+        "dropsim": {"ingress": 0.0, "egress": 0.0}
+      }
+    }
+  }
+}

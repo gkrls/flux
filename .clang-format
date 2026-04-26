@@ -1,0 +1,12 @@
+BasedOnStyle: LLVM
+IndentWidth: 2
+BinPackArguments: true
+BinPackParameters: true
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+AllowShortLoopsOnASingleLine: true
+AllowShortLambdasOnASingleLine: All
+AllowShortFunctionsOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
+# AllowShortCaseExpressionOnASingleLine: true
+AllowShortBlocksOnASingleLine: true
+ColumnLimit: 120

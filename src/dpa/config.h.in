@@ -1,0 +1,88 @@
+#ifndef DPA_CONFIG_H
+#define DPA_CONFIG_H
+
+#cmakedefine01 DPA_TRACE
+#cmakedefine01 DPA_DPDK
+#cmakedefine01 DPA_DROPSIM
+#cmakedefine01 DPA_SIMD
+#cmakedefine01 DPA_PROFILE
+#cmakedefine01 DPA_AVX512_AVAILABLE
+#cmakedefine01 DPA_AVX2_AVAILABLE
+
+#cmakedefine01 DPA_IMPLICIT_SYN
+
+#cmakedefine01 DPA_FASTESTK_EXIT
+#cmakedefine01 DPA_FASTESTK_BULK
+#cmakedefine01 DPA_SYNCHRON_BULK
+
+#cmakedefine01 DPA_DPDK_RE_FIRST
+#cmakedefine01 DPA_DPDK_RE_DISABLE
+#cmakedefine01 DPA_DPDK_RX_REUSE
+#cmakedefine01 DPA_DPDK_WIN_LARGE
+#cmakedefine01 DPA_DPDK_WIN_LARGER
+#cmakedefine01 DPA_DPDK_WIN_HUGE
+#cmakedefine01 DPA_SOCKET_ZEROCOPY
+#cmakedefine01 DPA_TORCH_PINNEDPOOL
+#cmakedefine01 DPA_TORCH_PINNEDPOOL_PRETOUCH
+// #cmakedefine01 DPA_TORCH_PIPELINING
+// #cmakedefine01 DPA_TORCH_WORKSTEALING
+#cmakedefine01 DPA_TORCH_PIPELINE
+#cmakedefine01 DPA_TORCH_WORKSTEAL
+#cmakedefine01 DPA_TORCH_MIXED
+
+#define DPA_BUILD_TYPE "@CMAKE_BUILD_TYPE@"
+
+#define DPA_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define DPA_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define DPA_VERSION_PATCH @PROJECT_VERSION_PATCH@
+
+/* stringify helpers */
+#define DPA_STR_HELPER(x) #x
+#define DPA_STR(x) DPA_STR_HELPER(x)
+
+/* canonical version strings */
+#define DPA_VERSION_STRING DPA_STR(DPA_VERSION_MAJOR) "." DPA_STR(DPA_VERSION_MINOR) "." DPA_STR(DPA_VERSION_PATCH)
+#define DPA_VERSION_STRING_FULL DPA_VERSION_STRING "-" DPA_BUILD_TYPE
+
+#ifndef DPA_DEBUG
+#ifdef NDEBUG
+#define DPA_DEBUG 0
+#else
+#define DPA_DEBUG 1
+#endif
+#endif
+
+/* Force-disable tracing when debug is off */
+#if DPA_TRACE && !DPA_DEBUG
+#warning "DPA_TRACE forced off because DPA_DEBUG==0"
+#undef DPA_TRACE
+#define DPA_TRACE 0
+#endif
+
+#ifdef DPA_DEBUG
+#define DPA_DEBUG_DO(code) code;
+#else
+#define DPA_DEBUG_DO(code) ;
+#endif
+
+#ifdef DPA_TRACE
+#define DPA_TRACE_DO(code) code;
+#else
+#define DPA_TRACE_DO(code) ;
+#endif
+
+
+
+#include <string_view>
+
+namespace dpa {
+
+inline constexpr std::string_view BUILD_TYPE = DPA_BUILD_TYPE;
+inline constexpr std::string_view VERSION_STRING = DPA_VERSION_STRING;
+inline constexpr std::string_view VERSION_STRING_FULL = DPA_VERSION_STRING_FULL;
+inline constexpr unsigned int VERSION_NUMERIC = DPA_VERSION_MAJOR * 10000 + DPA_VERSION_MINOR * 100 + DPA_VERSION_PATCH;
+
+
+} // namespace dpa
+
+#endif // DPA_UTIL_CONFIG_H

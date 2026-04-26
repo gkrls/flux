@@ -1,0 +1,15 @@
+#!/bin/bash
+# DPA Switch Control Plane Library Path Setup
+# This script adds the DPA switch control plane library to your Python path
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Add the library path to PYTHONPATH
+export PYTHONPATH="@CMAKE_INSTALL_PREFIX@/lib:${PYTHONPATH}"
+
+echo "Added @CMAKE_INSTALL_PREFIX@/lib to PYTHONPATH"
+echo "You can now use: from dpa_switch_controlplane import setup_switch"
+
+# Optional: Add this to your shell profile for persistent setup
+# echo 'export PYTHONPATH="@CMAKE_INSTALL_PREFIX@/lib:${PYTHONPATH}"' >> ~/.bashrc

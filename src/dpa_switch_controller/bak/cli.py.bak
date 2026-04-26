@@ -1,0 +1,639 @@
+
+from netaddr import IPAddress, EUI
+import os
+import sys
+import math
+import json
+import glob
+import pprint
+from typing import Dict, List, Optional, Any
+
+
+def tsc_for_ms(ms, tick_bits=16, ts_bits=48):
+    assert tick_bits <= ts_bits, "tick bits must be less than 16"
+    if ms == 0:
+        return 0
+    tick = 2 ** tick_bits
+    nanos = ms * 1_000_000
+    tsc = math.ceil(nanos / tick)
+    if tsc > (2 ** (ts_bits - tick_bits) - 1):
+        raise Exception(f"resulting tsc ({tsc}) requires more than ({ts_bits - tick_bits}) bits")
+    return tsc
+
+PK_NONE = 0x0
+PK_INPUT = 0x1
+PK_OUTPUT_0 = 0x2
+PK_OUTPUT_1 = 0x3
+PK_SYN = 0x4
+PK_BAD = 0xff
+
+
+class BfrtCLIController:
+    """DPA Switch Controller
+    
+    This class is only meant to be use inside a BFRT CLI sessions
+    and thus requires a bfrt object to.
+    """
+
+    def __init__(self, bfrt, config_path: str):
+        """Initialize DPA control plane with configuration."""
+        if config_path:
+            with open(config_path, "r") as f:
+                self.conf = json.load(f)
+        else: raise ValueError("No configuration provided")
+        
+        self.straggle_aware = "straggle_aware" in self.conf["switch"]["program"] and self.conf["switch"]["program"]["straggle_aware"]
+        self.has_counters = self.conf['switch']['program']['config'].get('dpa_counters', False)
+        self.is_asic = "asic" in self.conf["switch"] and self.conf["switch"]["asic"]
+
+        print("\n****************************************************************")
+        print("Using config file:", config_path)
+        print("P4 device: Tofino", self.conf['switch']['tofino'], 'asic' if self.conf['switch']['asic'] else 'model')
+        print("P4 program:", "\'dpa\'" if self.straggle_aware else "\'dpa_su\'")
+        print("P4 program config:")
+        print(json.dumps(self.conf["switch"]["program"]["config"], indent=2))
+        print("DPA session config:")
+        if self.conf['switch'].get("sessions", {}).get("main", None):
+            print(json.dumps(self.conf["switch"]["sessions"]["main"], indent=2))
+        else:
+            print("  n/a")
+
+        self.bfrt = bfrt
+        self.P4 = self.bfrt.switch.pipe
+        self.IN = self.P4.ingress
+        self.EG = self.P4.egress
+        
+    ### Utils ###
+
+    def get_port(self, fport: str | int):
+        """
+        Convert a front panel port (cage/channel) string to an internal device port number
+        usable by the switch dataplane/controller.
+
+        Args:
+            s (str): Port string in format "fp/ch" or just "fp"
+
+        Returns:
+            int: Device port number
+
+        Example:
+            >>> self.get_port("1/0")  # front panel 1, channel 0
+            >>> self.get_port("2")    # front panel 2, channel 0
+        """
+        fp, ch = (int(fport.split('/')[0]), int(fport.split('/')[1])) if '/' in str(fport) else (int(fport), 0)
+        return self.bfrt.port.port_hdl_info.get(CONN_ID=fp, CHNL_ID=ch, print_ents=False).data[b'$DEV_PORT']
+
+    def add_port(self, port: int, speed : int, enable : bool = True, an : bool = False, fec : str = "BF_FEC_TYP_NONE", 
+                 loopback : str = None):
+        self.bfrt.port.port.add(DEV_PORT=port, SPEED=f"BF_SPEED_{speed}G", FEC=fec, PORT_ENABLE=enable,
+                        AUTO_NEGOTIATION="PM_AN_FORCE_%s" % ("ENABLE" if an else "DISABLE"), LOOPBACK_MODE=loopback)
+
+    def add_fport(self, fport: str | int, speed : int, enable : bool = True, an : bool = False, fec : str = "BF_FEC_TYP_NONE", 
+                  loopback : str = None):
+        self.bfrt.port.port.add(DEV_PORT=self.get_port(fport), SPEED=f"BF_SPEED_{speed}G", FEC=fec, PORT_ENABLE=enable,
+                        AUTO_NEGOTIATION="PM_AN_FORCE_%s" % ("ENABLE" if an else "DISABLE"), LOOPBACK_MODE=loopback)
+
+    def add_multicast_group(self, mgid: int, ports: List[int], name: str|None = None):
+        try:
+            self.bfrt.pre.node.entry(MULTICAST_NODE_ID=mgid, MULTICAST_RID=mgid, MULTICAST_LAG_ID=[], DEV_PORT=ports).push()
+            self.bfrt.pre.mgid.add(MGID=mgid, MULTICAST_NODE_ID=[mgid], MULTICAST_NODE_L1_XID_VALID=[False], MULTICAST_NODE_L1_XID=[0])
+            print(f"  . added multicast group {mgid} -> {ports} {('(' + name + ')') if name is not None else ''}")
+        except Exception as e:
+            print(f"  failed to add multicast group {mgid} -> {ports}", e)
+
+    def get_port_in_pipe(self, dport, pipe):
+        assert pipe < 4, "pipe cannot be >= 4"
+        PORT_MASK = (1 << 7) - 1
+        PIPE_MASK = (1 << 2) - 1
+        return ((pipe & PIPE_MASK) << 7) | (dport & PORT_MASK)
+
+    ### Common ### 
+    def setup_network(self):
+        # Clear ports
+        print("  Cleanup")
+        if "asic" in self.conf["switch"] and self.conf["switch"]["asic"]:
+            self.bfrt.port.port.clear()
+            print("  . cleared device ports")
+
+        # Clear multicast nodes/groups
+        if self.bfrt.pre.node.info(return_info=True, print_info=False)['usage']:
+            for e in self.bfrt.pre.node.get(regex=True, return_ents=True, print_ents=False):
+                e.remove()
+        if self.bfrt.pre.mgid.info(return_info=True, print_info=False)['usage']:
+            for e in self.bfrt.pre.mgid.get(regex=True, return_ents=True, print_ents=False):
+                e.remove()
+        # Clear forwarding tables
+        self.IN.net.forwarding.clear()
+        self.IN.net.icmp.clear()
+        self.IN.net.arp.clear()
+        print("  . cleared forwarding,multicast,icmp,arp tables\n")
+
+        def _add_forwarding_rule(mac: EUI, port: int):
+            self.IN.net.forwarding.add_with_send_to_port(dst_addr=mac, port=port)
+            print(f"  . added forwarding rule {mac} -> {port}")
+
+        def _add_arp_resolution_rule(ip: IPAddress, mac: EUI):
+            self.IN.net.arp.add_with_arp_resolve(dst_proto_addr=ip, mac=mac)
+            print(f"  . added arp resolution rule {mac} -> {ip}")
+
+        print("\n** NET *********************************************************\n")
+
+        # Setup device ports if on asic
+        if self.is_asic:
+            pipes = self.conf["switch"]["pipes"]
+
+            print("  Forward ports")
+            for fport, info in self.conf["switch"]["ports"].items(): 
+                port = self.get_port(fport)
+                rest = [(pipe, self.get_port_in_pipe(port, pipe)) for pipe in pipes[1:]]
+                
+                s = f"    [{fport}] {port} ({pipes[0]})"
+                self.add_port(port, info["speed"], info["enable"], info["auto-negotiation"])
+                for pipe,port in rest:
+                    self.add_port(port, info['speed'], info["enable"], info["auto-negotiation"], loopback="BF_LPBK_MAC_NEAR")
+                    s += f" --> {port:>3} ({pipe})"
+                print(s, f" , {info['speed']}G")
+
+            print("  Backward ports")
+            for fport, info in self.conf["switch"].get("lpbk_ports", {}).items():
+                port = self.get_port(fport)
+                rest = [(pipe, self.get_port_in_pipe(port, pipe)) for pipe in pipes[1:]]
+                speed = info.get('speed', 100 if "tofino" in self.conf['switch'] and self.conf['switch']['tofino'] == 1 else 400)
+
+                s = f"    [{fport}] {port} ({pipes[0]})"
+                self.add_port(port, speed, enable=True, fec="BF_FEC_TYP_RS", loopback="BF_LPBK_MAC_NEAR")
+                for pipe,port in rest:
+                    self.add_port(port, speed, enable=True, fec="BF_FEC_TYP_RS", loopback="BF_LPBK_MAC_NEAR")
+                    s += f" --> {port:>3} ({pipe})"
+                print(s, f" , {info['speed']}G")
+
+        # Setup flood multicast group
+        print("  Multicast")
+        self.add_multicast_group(self.conf["switch"]["flood_mgid"], [self.get_port(fport) for fport in self.conf['switch']['ports']], "flood")
+
+        # Add forwarding rules for all hosts
+        print("  Forwarding")
+        for fport in self.conf['switch']['ports']:
+            if "host" in self.conf["switch"]["ports"][fport]:
+                hostname = self.conf["switch"]["ports"][fport]["host"]
+                if hostname in self.conf["hosts"]:
+                    hostinfo = self.conf["hosts"][hostname]
+                    mac, port = EUI(hostinfo["mac"]), self.get_port(fport)
+                    self.IN.net.forwarding.add_with_send_to_port(dst_addr=mac, port=port)
+                    print(f"  . added forwarding rule {mac} -> {port}")
+                else: print(f"  . skipped forwarding rule for port {fport}, host not found")
+            else: print(f"  . skipped arp resolution rule for port {fport}, no host")
+
+        # Add ARP resolution rules for all hosts + switch
+        print("  ARP")
+        for fport in self.conf['switch']['ports']:
+            if "host" in self.conf["switch"]["ports"][fport]:
+                hostname = self.conf["switch"]["ports"][fport]["host"]
+                if hostname in self.conf["hosts"]:
+                    hostinfo = self.conf["hosts"][hostname]
+                    mac, ip = EUI(hostinfo["mac"]), IPAddress(hostinfo["ip"])
+                    self.IN.net.arp.add_with_arp_resolve(dst_proto_addr=ip, mac=mac)
+                    print(f"  . added arp resolution rule {mac} -> {ip}")
+                else: print(f"  . skipped arp resolution rule for port {fport}, host not found")
+            else: print(f"  . skipped arp resolution rule for port {fport}, no host")
+
+        # Switch ARP entry
+        self.IN.net.arp.add_with_arp_resolve(dst_proto_addr=IPAddress(self.conf["switch"]["ip"]), mac=EUI(self.conf["switch"]["mac"]))
+        print(f"  . added arp resolution rule {mac} -> {ip}")
+
+        # Switch responds to ICMP echo requests for its IP
+        print("  ICMP")
+        self.IN.net.icmp.add_with_icmp_echo_respond(dst_addr=IPAddress(self.conf["switch"]["ip"]))
+        print(f"  . added icmp entry for switch ip {IPAddress(self.conf['switch']['ip'])}")
+
+    ### SA version ### 
+    def setup_dpa(self):
+        """Setup straggle-aware DPA """
+        print("\n** DPA *********************************************************\n")
+
+        # Clear all dpa ingress state
+        self.IN.dpa.receiver.sequence.clear()
+        # self.IN.dpa.receiver.receiver_table.clear()
+        self.IN.dpa.state.timer.time.clear()
+        self.IN.dpa.state.timer.tolerance.set_default(0)
+        self.IN.dpa.state.bitmap.bitmap.clear()
+        self.IN.dpa.state.counter.counter.clear()
+        self.IN.dpa.state.counter.counter_last.clear()
+        for i in range(self.conf['switch']['program']['config']['dpa_reducers']): getattr(self.IN.dpa.reduce, f"value_{i:02d}").R.clear()
+        for i in range(self.conf['switch']['program']['config']['dpa_exponents']): getattr(self.IN.dpa.reduce, f"exponent_{i:01d}").R.clear()
+
+        # Clear all dpa egress state
+        self.EG.dpa.sender.sender_table.clear()
+        try:
+            self.EG.dpa.dropsim.dropsim_thres.clear()
+            self.EG.dpa.dropsim.dropsim_table.clear()
+        except AttributeError as e:
+            print(f"   error: {e}")
+
+        # Clear counters (if enabled)
+        try:
+            self.IN.dpa.receiver.ingress_receiver_pkt_counter.clear();
+            self.IN.dpa.receiver.ingress_receiver_old_counter.clear();
+            self.IN.dpa.receiver.ingress_receiver_syn_counter.clear();
+            self.IN.dpa.state.counter.pkt_counter.clear()
+            self.IN.dpa.next.ingress_next_pre_pkt_counter.clear()
+            self.EG.dpa.sender.pkt_counter.clear();
+        except:
+            pass
+
+        for session_name in self.conf["switch"]["sessions"]:
+            # DPA session configuration
+            session_config = self.conf["switch"]["sessions"][session_name]
+            session_id = session_config["id"]
+            session_mgid = session_config["mgid"]
+            switch_mac = EUI(self.conf["switch"]["mac"])
+            switch_ip = IPAddress(self.conf["switch"]["ip"])
+
+            print(f'\n  Session {session_id}')
+
+            # Configure endpoint
+            # self.IN.dpa.receiver.receiver_table.add_with_ignore(kind=0)
+            # self.IN.dpa.receiver.receiver_table.add_with_ignore(ip_checksum_error=1)
+            self.EG.dpa.sender.sender_table.add_with_drop(u2=1)
+            for fport in session_config["ports"]:
+                hostname = self.conf["switch"]["ports"][fport]["host"]
+                hostinfo = self.conf["hosts"][hostname]
+                mac, ip = EUI(hostinfo["mac"]), IPAddress(hostinfo["ip"])
+
+                # self.IN.dpa.receiver.receiver_table.add_with_recv( ingress_port=self.get_port(fport), session=session_id, mgid=session_mgid )
+                # self.IN.dpa.receiver.receiver_table.add_with_recv_syn( ingress_port=self.get_port(fport), session=session_id, syn=1 )
+                self.EG.dpa.sender.sender_table.add_with_send(egress_port=self.get_port(fport), session=session_id,
+                                                              switch_mac=switch_mac, switch_ip=switch_ip, worker_mac=mac, worker_ip=ip)
+                print(f"  . added sender/receiver entries for '{hostname}' {mac}/{ip}") #'{self.conf['dpa']['comm']}'
+
+            # self.IN.dpa.receiver.receiver_table.add_with_recv_noop(session=1)
+
+            # Setup session multicast group
+            self.add_multicast_group(session_mgid, [self.get_port(fp) for fp in session_config["ports"]], f"session '{session_name}'")
+
+            # Configure straggle timeout
+            # tsc = TSC(session_config["straggle-timeout"])
+            tsc = tsc_for_ms(session_config["straggle_timeout_ms"], 16, 48)
+            self.IN.dpa.state.timer.tolerance.set_default(tsc)
+            print(f'  . added straggle-timeout of {session_config["straggle_timeout_ms"]}ms'
+                f' -> tsc={tsc} ticks of {2 ** 16}ns actual= {tsc * 2 ** 16 / 1_000_000}ms')
+
+            # Configure drop simulation
+            try:
+                eg_drop_thres = (2 ** 16 - 1) * session_config['dropsim']['egress']
+                self.EG.dpa.dropsim.dropsim_table.add_with_dropsim(session=1, internal_job_id=1)
+                self.EG.dpa.dropsim.dropsim_thres.add(REGISTER_INDEX=(session_id - 1), f1=eg_drop_thres)
+                print(f"  . added {eg_drop_thres} egress dropsim")
+            except AttributeError as e:
+                print(f"   error: {e}")
+
+    def read_ingress_receiver_counters(self):
+        print("---------------------------------------")
+        print("PKT_COUNT: ingress.dpa.receiver.counter")
+        print("---------------------------------------")
+        if not self.has_counters:
+            print("  n/a\n")
+            return
+        
+        pipe0 = {
+            "inp_old": self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=1, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "inp_exp": self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=2, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "inp_new": self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=3, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "inp_hi" : self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=4, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "syn_old": self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=5, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "syn_exp": self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=6, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "syn_new": self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=7, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "syn_hi" : self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=8, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+
+            "bad"  : self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=9, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "none" : self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=0, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "other": self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=19, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"]
+        }
+        pipeN = {
+            "syn": self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=21, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "bad": self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=22, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "none" : self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=20, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+            "other": self.IN.dpa.receiver.ingress_receiver_pkt_counter.get(COUNTER_INDEX=29, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"],
+        }
+        
+        print(" [pipe0]")
+        for k,v in pipe0.items():
+            print(f"   {k:<8} | {v}")
+        print()
+
+        old = [self.IN.dpa.receiver.ingress_receiver_old_counter.get(COUNTER_INDEX=i, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(6)]
+        syn = [self.IN.dpa.receiver.ingress_receiver_syn_counter.get(COUNTER_INDEX=i, from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(6)]
+        print("   old_per_port: " + "".join(f"[{i}] {o:<{14}}" for i, o in enumerate(old)))
+        print("   syn_per_port: " + "".join(f"[{i}] {o:<{14}}" for i, o in enumerate(syn)))
+
+        print("\n [pipeN]:")
+        for k,v in pipeN.items():
+            print(f"   {k:<8} | {v}")
+
+    def read_ingress_state_counters(self):
+        print("------------------------------------")
+        print("PKT_COUNT: ingress.dpa.state.counter")
+        print("------------------------------------")
+        if not self.has_counters:
+            print("  n/a\n")
+            return
+        NUM_COUNTERS=9
+        OK,OK_TIMEOUT=0,1
+        RE,RE_TIMEOUT=2,3
+        SY,OL,HI,RC=4,5,6,7
+        MISS=8
+        labels = ["ok", "ok_to", "re", "re_to", "sy", "ol", "hi", "rc", "miss"]
+        values = [
+            [self.IN.dpa.state.counter.pkt_counter.get(COUNTER_INDEX=(i * NUM_COUNTERS + OK),         from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(4)],
+            [self.IN.dpa.state.counter.pkt_counter.get(COUNTER_INDEX=(i * NUM_COUNTERS + OK_TIMEOUT), from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(4)],
+            [self.IN.dpa.state.counter.pkt_counter.get(COUNTER_INDEX=(i * NUM_COUNTERS + RE),         from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(4)],
+            [self.IN.dpa.state.counter.pkt_counter.get(COUNTER_INDEX=(i * NUM_COUNTERS + RE_TIMEOUT), from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(4)],
+            [self.IN.dpa.state.counter.pkt_counter.get(COUNTER_INDEX=(i * NUM_COUNTERS + SY),         from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(4)],
+            [self.IN.dpa.state.counter.pkt_counter.get(COUNTER_INDEX=(i * NUM_COUNTERS + OL),         from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(4)],
+            [self.IN.dpa.state.counter.pkt_counter.get(COUNTER_INDEX=(i * NUM_COUNTERS + HI),         from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(4)],
+            [self.IN.dpa.state.counter.pkt_counter.get(COUNTER_INDEX=(i * NUM_COUNTERS + RC),         from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(4)],
+            [self.IN.dpa.state.counter.pkt_counter.get(COUNTER_INDEX=(i * NUM_COUNTERS + MISS),       from_hw=True, print_ents=False).data[b"$COUNTER_SPEC_PKTS"] for i in range(4)],
+        ]        
+        
+        col_widths = [max(len(str(v)) for v in column) for column in zip(*values)]
+        for label, row in zip(labels, values):
+            line = " | ".join(str(row[i]).ljust(col_widths[i])for i in range(len(row)))
+            print(f"{label:>8} | {line}")
+        print()
+    
+    def read_ingress_next_counters(self):
+        print("---------------------------------")
+        print("PKT_COUNT: ingress.dpa.next (pre)")
+        print("---------------------------------")
+        if not self.has_counters:
+            print("  n/a\n")
+            return
+        data = {
+            "syn_incomplete"      : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=7, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "syn_complete"        : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=8, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "old_incomplete"      : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=9, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "old_complete"        : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=10, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "new"                 : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=11, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "exp"                 : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=12, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "bad_input_old_seen"  : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=2, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "bad_input_hi_seen"   : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=3, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "bad_input_hi_unseen" : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=4, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "bad_syn_hi"          : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=5, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "bad_syn_complete_now": self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=6, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "bad_other"           : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=1, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+            "other"               : self.IN.dpa.next.ingress_next_pre_pkt_counter.get(COUNTER_INDEX=0, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS'],
+        }
+        for k,v in data.items():
+            print(f"  {k:<20} | {v}")
+        # syn_incomplete = self.IN.dpa.next.pkt_counter.get(COUNTER_INDEX=0, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        # syn_complete = self.IN.dpa.next.pkt_counter.get(COUNTER_INDEX=1, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        # syn_hi = self.IN.dpa.next.pkt_counter.get(COUNTER_INDEX=2, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        print()
+
+    def read_egress_sender_counters(self):
+        print("----------------------------")
+        print("PKT_COUNT: egress.dpa.sender")
+        print("----------------------------")
+        if not self.has_counters:
+            print("  n/a\n")
+            return
+        sy   = self.EG.dpa.sender.pkt_counter.get(COUNTER_INDEX=0, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        ol   = self.EG.dpa.sender.pkt_counter.get(COUNTER_INDEX=1, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        so   = self.EG.dpa.sender.pkt_counter.get(COUNTER_INDEX=2, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        ba   = self.EG.dpa.sender.pkt_counter.get(COUNTER_INDEX=3, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        re   = self.EG.dpa.sender.pkt_counter.get(COUNTER_INDEX=4, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        rn   = self.EG.dpa.sender.pkt_counter.get(COUNTER_INDEX=5, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        rk   = self.EG.dpa.sender.pkt_counter.get(COUNTER_INDEX=6, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        miss = self.EG.dpa.sender.pkt_counter.get(COUNTER_INDEX=7, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+        print(f"    syn  : {sy}")
+        print(f"    old  : {ol}")
+        print(f"syn_old  : {so}")
+        print(f"    bad  : {ba}")
+        print(f"    rtx  : {re}")
+        print(f"    res_n: {rn}")
+        print(f"    res_k: {rk}")
+        print(f"    miss : {miss}")
+        print()
+
+    def read_counters(self):
+        print()
+        print("  *************************************")
+        print("  *   DPA_SA switch packet counters   *")
+        print("  *************************************")
+        if not self.has_counters:
+            print("  n/a\n")
+            return
+        self.read_ingress_receiver_counters()
+        self.read_ingress_state_counters()
+        self.read_ingress_next_counters()
+        self.read_egress_sender_counters()
+
+    ### SU version ### 
+    def setup_dpa_su(self):
+        """Setup straggle-unaware DPA_su """
+
+        print("\n** DPA_su ******************************************************\n")
+
+        # Clear all DPA state
+            # Clear all dpa ingress state
+        self.IN.dpa.state.bitmap.bitmap.clear()
+        self.IN.dpa.state.counter.counter.clear()
+        for i in range(self.conf['switch']['program']['config']['dpa_reducers']): getattr(self.IN.dpa.reduce, f"value_{i:02d}").R.clear()
+        for i in range(self.conf['switch']['program']['config']['dpa_exponents']): getattr(self.IN.dpa.reduce, f"exponent_{i:01d}").R.clear()
+        # Clear all dpa egress state
+        self.EG.dpa.sender.sender_table.clear()
+        try:
+            self.EG.dpa.dropsim.dropsim_thres.clear()
+            self.EG.dpa.dropsim.dropsim_table.clear()
+        except AttributeError as e: print(f"   error: {e}")
+
+        # Clear counters (if enabled)
+        try:
+            # self.IN.dpa.state.counter.pkt_counter.clear()
+            self.IN.dpa.next.pkt_counter.clear()
+            self.IN.dpa.state.counter.pkt_counter.clear()
+            self.IN.dpa.state.counter.count_result_histo.clear()
+            # self.IN.dpa.next.pkt_counter.clear()
+            # self.EG.dpa.sender.pkt_counter.clear();
+        except: pass
+
+        for session_name in self.conf["switch"]["sessions"]:
+            """Setup DPA session configuration."""
+            session_config = self.conf["switch"]["sessions"][session_name]
+            session_id = session_config["id"]
+            session_mgid = session_config["mgid"]
+            switch_mac = EUI(self.conf["switch"]["mac"])
+            switch_ip = IPAddress(self.conf["switch"]["ip"])
+
+            print(f'\n  Session {session_id}')
+
+            # Add basic receiver/sender table entries
+            # self.IN.dpa.receiver.receiver_table.add_with_ignore(kind=0)
+            # self.IN.dpa.receiver.receiver_table.add_with_ignore(ip_checksum_error=1)
+            # self.EG.dpa.sender.sender_table.add_with_drop(u2=1)
+
+            # Configure session ports
+            for fport in session_config["ports"]:
+                hostname = self.conf["switch"]["ports"][fport]["host"]
+                hostinfo = self.conf["hosts"][hostname]
+                mac, ip = EUI(hostinfo["mac"]), IPAddress(hostinfo["ip"])
+
+                # self.IN.dpa.receiver.receiver_table.add_with_recv( ingress_port=self.get_port(fport), session=session_id, mgid=session_mgid )
+                # self.IN.dpa.receiver.receiver_table.add_with_recv_syn( ingress_port=self.get_port(fport), session=session_id, syn=1 )
+                self.EG.dpa.sender.sender_table.add_with_send(
+                    egress_port=self.get_port(fport), session=session_id,
+                    switch_mac=switch_mac, switch_ip=switch_ip,
+                    worker_mac=mac, worker_ip=ip
+                )
+                print(f"  . added sender entries for '{hostname}' {mac}/{ip}") #'{self.conf['dpa']['comm']}'
+
+            # self.IN.dpa.receiver.receiver_table.add_with_recv_noop(session=1)
+
+            # Setup session multicast group
+            self.add_multicast_group(session_mgid, [self.get_port(fport) for fport in session_config["ports"]], f"session '{session_name}'")
+
+            # Configure drop simulation
+            try:
+                eg_drop_thres = (2 ** 16 - 1) * session_config['dropsim']['egress']
+                self.EG.dpa.dropsim.dropsim_table.add_with_dropsim(session=1, internal_job_id=1)
+                self.EG.dpa.dropsim.dropsim_thres.add(REGISTER_INDEX=(session_id - 1), f1=eg_drop_thres)
+                print(f"  . added {eg_drop_thres} egress dropsim")
+            except AttributeError as e:
+                print(f"  error: {e}")
+
+    def read_ingress_receiver_counters_su(self):
+        print("COUNTER: ingress.dpa.receiver")
+        print("-----------------------------")
+        print("  n/a\n")
+
+    def read_ingress_state_counters_su(self):
+        print("COUNTER: ingress.dpa.state.counter.pkt_counter")
+        print("----------------------------------------------")
+        if self.has_counters:
+            counter = self.IN.dpa.state.counter
+            p0_miss = counter.pkt_counter.get(COUNTER_INDEX=0, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            p0_first = counter.pkt_counter.get(COUNTER_INDEX=1, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            p0_unseen = counter.pkt_counter.get(COUNTER_INDEX=2, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            p0_seen = counter.pkt_counter.get(COUNTER_INDEX=3, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            print(f" 0_first  : {p0_first}")
+            print(f" 0_unseen : {p0_unseen}")
+            print(f" 0_seen   : {p0_seen}")
+            print(f" 0_miss   : {p0_miss}")
+        else: print("  n/a")
+        print()
+
+        print("COUNTER: ingress.dpa.state.counter.count_result_histo")
+        print("-----------------------------------------------------")
+        if self.has_counters:
+            counter = self.IN.dpa.state.counter
+            h0_incomp       = counter.count_result_histo.get(COUNTER_INDEX=0, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            h0_comp_now     = counter.count_result_histo.get(COUNTER_INDEX=1, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            h0_comp_earlier = counter.count_result_histo.get(COUNTER_INDEX=2, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            h0_other        = counter.count_result_histo.get(COUNTER_INDEX=2, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            print(f" 0_incomplete      : {h0_incomp}")
+            print(f" 0_complete_now    : {h0_comp_now}")
+            print(f" 0_complete_earlier: {h0_comp_earlier}")
+            print(f" 0_other           : {h0_other}")
+        else: print("  n/a")
+        print()
+
+    def read_ingress_reduce_counters_su(self):
+        print("ingress.dpa.reduce.pkt_counter")
+        print("------------------------------")
+        if self.has_counters:
+            counter = self.IN.dpa.reduce.pkt_counter
+            num_counters = 8;
+            for i in range(2):
+                out0 =    counter.get(COUNTER_INDEX=i * num_counters + 1, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+                out1 =    counter.get(COUNTER_INDEX=i * num_counters + 2, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+                c_write = counter.get(COUNTER_INDEX=i * num_counters + 3, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+                c_updat = counter.get(COUNTER_INDEX=i * num_counters + 4, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+                c_read  = counter.get(COUNTER_INDEX=i * num_counters + 5, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+                wtf1 = counter.get(COUNTER_INDEX=i * num_counters + 6, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+                wtf2 = counter.get(COUNTER_INDEX=i * num_counters + 7, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+                miss = counter.get(COUNTER_INDEX=i * num_counters + 0, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+                if i > 0: print()
+                print(f"  {i}       miss: {miss}")
+                print(f"  {i}      write: {c_write}")
+                print(f"  {i}     update: {c_updat}")
+                print(f"  {i}    read_in: {c_read}")
+                print(f"  {i} read_out_0: {out0}")
+                print(f"  {i} read_out_1: {out1}")
+                print(f"  {i} should_not_happen_1: {wtf1}")
+                print(f"  {i} should_not_happen_2: {wtf2}")
+        else: print("  n/a")
+        print()
+
+    def read_ingress_next_counters_su(self):
+        print("COUNTER: ingress.dpa.next")
+        print("-------------------------")
+        if self.has_counters:
+            miss = self.IN.dpa.next.pkt_counter.get(COUNTER_INDEX=0, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            rxi  = self.IN.dpa.next.pkt_counter.get(COUNTER_INDEX=1, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            rxc  = self.IN.dpa.next.pkt_counter.get(COUNTER_INDEX=2, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            rtxi = self.IN.dpa.next.pkt_counter.get(COUNTER_INDEX=3, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            rtxc = self.IN.dpa.next.pkt_counter.get(COUNTER_INDEX=4, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            unic = self.IN.dpa.next.pkt_counter.get(COUNTER_INDEX=5, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            mult = self.IN.dpa.next.pkt_counter.get(COUNTER_INDEX=6, from_hw=True, print_ents=False).data[b'$COUNTER_SPEC_PKTS']
+            print(f" ok_incomplete: {rxi}")
+            print(f"   ok_complete: {rxc}")  
+            print(f" re_incomplete: {rtxi}")
+            print(f"   re_complete: {rtxc}")
+            print(f"       unicast: {unic}")
+            print(f"     multicast: {mult}")
+            print(f"          miss: {miss}")
+        else: print("  n/a")
+        print()       
+
+    def read_counters_su(self):
+        print()
+        print("  ***************************************")
+        print("  *    DPA_SU switch packet counters    *")
+        print("  ***************************************")
+        if not self.has_counters:
+            print("  n/a")
+            return
+        print()
+        self.read_ingress_receiver_counters_su()
+        self.read_ingress_state_counters_su()
+        self.read_ingress_reduce_counters_su()
+        self.read_ingress_next_counters_su()
+
+
+
+
+
+
+
+
+
+
+def setup_switch(bfrt, config_path: str):
+    """Convenience function to setup a complete switch configuration."""
+    cp = BfrtCLIController(bfrt, config_path)
+    cp.setup_network()
+    if cp.straggle_aware:
+        cp.setup_dpa()
+    else:
+        cp.setup_dpa_su()
+    return cp
+
+def read_counters(bfrt, config_path: str):
+    cp = BfrtCLIController(bfrt, config_path)
+    if cp.straggle_aware:
+        cp.read_counters()
+    else:
+        cp.read_counters_su()
+
+# def setup_network_only(bfrt, config_path: str):
+#     """Convenience function to setup only network forwarding."""
+#     cp = BfrtCLIWrapper(bfrt, config_path=config_path)
+#     cp.setup_network()
+#     return cp
+
+
+# def setup_dpa_only(bfrt, config_path: str):
+#     """Convenience function to setup only DPA configuration."""
+#     cp = BfrtCLIWrapper(bfrt, config_path=config_path)
+#     cp.setup_dpa()
+#     return cp
