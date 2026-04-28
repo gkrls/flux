@@ -50,12 +50,6 @@
 #define ANY_PORT_PIPE_2 (PIPE_2 << 7) &&& PIPE_MASK
 #define ANY_PORT_PIPE_3 (PIPE_3 << 7) &&& PIPE_MASK
 
-
-// #define REC_PORT_PIPE_0 68
-// #define REC_PORT_PIPE_1 196
-// #define REC_PORT_PIPE_2 324
-// #define REC_PORT_PIPE_3 452
-
 #ifdef DPA_BACKWARD_PORT
 #warning "RECIRCULATION PORT BASE: User-defined backward loopback port. See backward loopback chain in bfrt cli output"
 #define REC_PORT_BASE DPA_BACKWARD_PORT

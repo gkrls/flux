@@ -1,14 +1,6 @@
 #ifndef P4_NEXT
 #define P4_NEXT
 
-// #define SINGLE_PIPE_SINGLE_MODE (DPA_PIPES == 1) && (DPA_REDUCER_MODE == DPA_REDUCER_SINGLE)
-// #define SINGLE_PIPE_DOUBLE_MODE (DPA_PIPES == 1) && (DPA_REDUCER_MODE == DPA_REDUCER_DOUBLE)
-// #define DOUBLE_PIPE_SINGLE_MODE (DPA_PIPES == 2) && (DPA_REDUCER_MODE == DPA_REDUCER_SINGLE)
-// #define DOUBLE_PIPE_DOUBLE_MODE (DPA_PIPES == 2) && (DPA_REDUCER_MODE == DPA_REDUCER_DOUBLE)
-// #define   QUAD_PIPE_SINGLE_MODE (DPA_PIPES == 4) && (DPA_REDUCER_MODE == DPA_REDUCER_SINGLE)
-// #define   QUAD_PIPE_DOUBLE_MODE (DPA_PIPES == 4) && (DPA_REDUCER_MODE == DPA_REDUCER_DOUBLE)
-// #define PIPE_CONFIG(pipe, mode) (DPA_PIPES == pipe) && (DPA_REDUCER_MODE == mode)
-
 control dpa_next( inout headers_t H, inout ingress_metadata_t M,
                   in ingress_intrinsic_metadata_t IM,
                   inout ingress_intrinsic_metadata_for_deparser_t DIM,
@@ -80,19 +72,6 @@ control dpa_next( inout headers_t H, inout ingress_metadata_t M,
     H.dpa.flags.u2 = 1;
     M.dpa.setInvalid();
   }
-  // SYN
-  // action unicast_syn() {
-  //   TIM.ucast_egress_port = M.dpa.ingress_port;
-  //   TIM.bypass_egress = 0;
-  //   DIM.drop_ctl[0:0] = 0;
-  //   H.dpa.bitmap = M.dpa.bitmap_pre;
-  //   H.dpa.offset = M.dpa.sequence;
-  //   H.dpa.world.n = M.dpa.world_n;
-  //   H.dpa.world.k = -((dpa_world_size_t) M.dpa.count); // SYN cannot complete a slot. Thus, count is negative, so we need to flip it
-  //   H.dpa.flags.u1 = 0; // re
-  //   // H.dpa.flags.syn = 1;
-  //   M.dpa.setInvalid(); 
-  // }
   action unicast_syn_complete_exp() {
     TIM.ucast_egress_port = M.dpa.ingress_port;
     TIM.bypass_egress = 0;

@@ -209,7 +209,6 @@ control dpa_counter( inout headers_t H, inout ingress_metadata_t M, in ingress_i
       } else {
         c.fini = -c.count;
         result = c.fini;
-        // result = -c.count;
       }
     }
   };
@@ -230,7 +229,6 @@ control dpa_counter( inout headers_t H, inout ingress_metadata_t M, in ingress_i
         }
       } else {
         c.fini = -c.count;
-        // result = -c.fini;
         result = c.fini;
       }
     }
@@ -247,7 +245,6 @@ control dpa_counter( inout headers_t H, inout ingress_metadata_t M, in ingress_i
         }
       } else {
         c.fini = -c.count;
-        // result = -c.fini;
         result = c.fini;
       }
     }

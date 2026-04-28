@@ -9,7 +9,6 @@ control dpa_receiver_udp( inout headers_t H, inout ingress_metadata_t M,
   Register<bit<32>, bit<32>>(DPA_SLOTS, 0) sequence;
   RegisterAction<bit<32>, dpa_slot_t, dpa_seq_t>(sequence) process_sequence = {
     void apply(inout bit<32> prev, out dpa_seq_t result) {
-      // int<32> diff = ((int<32>) H.dpa.seq - (int<32>) prev);
       int<32> diff = (int<32>)(H.dpa.seq - prev);
       result = (bit<32>) diff;
       if (diff == 1)
