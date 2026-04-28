@@ -98,7 +98,7 @@ control dpa_bitmap( inout headers_t H, inout ingress_metadata_t M,
   action bitmap_new() {
     dpa_bitmap_t tmp = bitmap_set.execute(H.dpa.slot);
     M.dpa.bitmap_pre = tmp;
-    M.dpa.bitmap     = W_NOT_SEEN;
+    M.dpa.bitmap     = W_UNSEEN;
   }
   action bitmap_rec_and_check() {
     dpa_bitmap_t tmp = bitmap_rec.execute(H.dpa.slot);
@@ -282,8 +282,8 @@ control dpa_counter( inout headers_t H, inout ingress_metadata_t M,
     const size = 16;
     const default_action = NoAction;
     const entries = {
-      ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_EXP ,  W_NOT_SEEN,            _ ) : count_intermediate();
-      ( /*                   */  P_INPUT, S_EXP ,  W_NOT_SEEN,    T_TIMEOUT ) : count_intermediate_timeout(); // !!!!
+      ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_EXP ,  W_UNSEEN,            _ ) : count_intermediate();
+      ( /*                   */  P_INPUT, S_EXP ,  W_UNSEEN,    T_TIMEOUT ) : count_intermediate_timeout(); // !!!!
       ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_EXP ,      W_SEEN, T_NO_TIMEOUT ) : count_retransmission();
       ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_EXP ,      W_SEEN,    T_TIMEOUT ) : count_retransmission_timeout();
       ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_NEW ,           _,            _ ) : count_first();
@@ -332,7 +332,7 @@ control dpa_counter( inout headers_t H, inout ingress_metadata_t M,
     const default_action = pkt_count_miss;
     const entries = {
       ( REC_PORT_PIPE_0 ,  _      , _     ,  _         ,            _ ) : pkt_count_recirculation();
-      ( ANY_PORT_PIPE_0 ,  P_INPUT, S_EXP ,  W_NOT_SEEN,            _ ) : pkt_count_intermediate();
+      ( ANY_PORT_PIPE_0 ,  P_INPUT, S_EXP ,  W_UNSEEN,            _ ) : pkt_count_intermediate();
       ( ANY_PORT_PIPE_0 ,  P_INPUT, S_EXP ,      W_SEEN, T_NO_TIMEOUT ) : pkt_count_retransmission();
       ( ANY_PORT_PIPE_0 ,  P_INPUT, S_EXP ,      W_SEEN,    T_TIMEOUT ) : pkt_count_retransmission_timeout();
       ( ANY_PORT_PIPE_0 ,  P_INPUT, S_NEW ,           _,            _ ) : pkt_count_first();

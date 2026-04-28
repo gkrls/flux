@@ -39,13 +39,13 @@ control dpa_value_reducer_single ( in ingress_metadata_t M, in dpa_slot_t idx, i
     const size = 7;
     const default_action = NoAction;
     const entries = {
-      ( P_OUTPUT_0, _    ,  _         , _                  ) : read();
-      ( P_INPUT   , S_EXP,  W_NOT_SEEN, C_INCOMPLETE       ) : update();
-      ( P_INPUT   , S_EXP,  W_NOT_SEEN, C_COMPLETE_NOW     ) : update(); // normal completion -> agg and read
-      ( P_INPUT   , S_EXP,  W_SEEN    , C_COMPLETE_NOW     ) : read();   // forced completion -> only read
-      ( P_INPUT   , S_EXP,  _         , C_COMPLETE_EARLIER ) : read();
-      ( P_INPUT   , S_NEW,  _         , _                  ) : write();
-      ( P_INPUT   , S_HI ,  _         , _                  ) : NoAction();
+      ( P_OUTPUT_0, _    ,  _       , _                  ) : read();
+      ( P_INPUT   , S_EXP,  W_UNSEEN, C_INCOMPLETE       ) : update();
+      ( P_INPUT   , S_EXP,  W_UNSEEN, C_COMPLETE_NOW     ) : update(); // normal completion -> agg and read
+      ( P_INPUT   , S_EXP,  W_SEEN  , C_COMPLETE_NOW     ) : read();   // forced completion -> only read
+      ( P_INPUT   , S_EXP,  _       , C_COMPLETE_EARLIER ) : read();
+      ( P_INPUT   , S_NEW,  _       , _                  ) : write();
+      ( P_INPUT   , S_HI ,  _       , _                  ) : NoAction();
     }
   }
 
@@ -107,9 +107,9 @@ control dpa_value_reducer_double ( in ingress_metadata_t M, in dpa_slot_t idx,
     const entries = {
       ( P_OUTPUT_0, _    ,  _         , _                  ) : read_lo();
       ( P_OUTPUT_1, _    ,  _         , _                  ) : read_hi();
-      ( P_INPUT   , S_EXP,  W_NOT_SEEN, C_INCOMPLETE       ) : update();
+      ( P_INPUT   , S_EXP,  W_UNSEEN, C_INCOMPLETE       ) : update();
       ( P_INPUT   , S_EXP,  _         , C_COMPLETE_EARLIER ) : read_lo();
-      ( P_INPUT   , S_EXP,  W_NOT_SEEN, C_COMPLETE_NOW     ) : update();  // normal completion -> agg and read
+      ( P_INPUT   , S_EXP,  W_UNSEEN, C_COMPLETE_NOW     ) : update();  // normal completion -> agg and read
       ( P_INPUT   , S_EXP,  W_SEEN    , C_COMPLETE_NOW     ) : read_lo(); // forced completion -> only read
       // ( P_INPUT   , S_EXP,  _         , C_COMPLETE_EARLIER ) : read_lo();
       ( P_INPUT   , S_NEW,  _         , _                  ) : write();
@@ -165,9 +165,9 @@ control dpa_exponent_reducer( in headers_t H, in ingress_metadata_t M, in dpa_sl
 #else
       ( P_OUTPUT_0, _    ,  _         , _                  ) : read();
 #endif
-      ( P_INPUT   , S_EXP,  W_NOT_SEEN, C_INCOMPLETE       ) : update();
+      ( P_INPUT   , S_EXP,  W_UNSEEN, C_INCOMPLETE       ) : update();
       ( P_INPUT   , S_EXP,  _         , C_COMPLETE_EARLIER ) : read();
-      ( P_INPUT   , S_EXP,  W_NOT_SEEN, C_COMPLETE_NOW     ) : update(); // normal completion -> agg and read
+      ( P_INPUT   , S_EXP,  W_UNSEEN, C_COMPLETE_NOW     ) : update(); // normal completion -> agg and read
       ( P_INPUT   , S_EXP,  W_SEEN    , C_COMPLETE_NOW     ) : read();   // forced completion -> only read
       // ( P_INPUT   , S_EXP,  _         , C_COMPLETE_EARLIER ) : read();
       ( P_INPUT   , S_NEW,  _         , _                  ) : write();

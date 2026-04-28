@@ -95,7 +95,7 @@ control dpa_bitmap( inout headers_t H, inout ingress_metadata_t M,
   action bitmap_new() {
     dpa_bitmap_t tmp = bitmap_set.execute(H.dpa.slot);
     M.dpa.bitmap_pre = tmp;
-    M.dpa.bitmap     = W_NOT_SEEN;
+    M.dpa.bitmap     = W_UNSEEN;
   }
   action bitmap_rec_and_check() {
     dpa_bitmap_t tmp = bitmap_rec.execute(H.dpa.slot);
@@ -282,8 +282,8 @@ control dpa_counter( inout headers_t H, inout ingress_metadata_t M, in ingress_i
     const size = 16;
     const default_action = NoAction;
     const entries = {
-      ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_EXP ,  W_NOT_SEEN, T_NO_TIMEOUT ) : count_intermediate();
-      ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_EXP ,  W_NOT_SEEN,    T_TIMEOUT ) : count_intermediate_timeout(); // !!!!
+      ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_EXP ,  W_UNSEEN, T_NO_TIMEOUT ) : count_intermediate();
+      ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_EXP ,  W_UNSEEN,    T_TIMEOUT ) : count_intermediate_timeout(); // !!!!
       ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_EXP ,      W_SEEN, T_NO_TIMEOUT ) : count_retransmission();
       ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_EXP ,      W_SEEN,    T_TIMEOUT ) : count_retransmission_timeout();
       ( /* ANY_PORT_PIPE_0 , */  P_INPUT, S_NEW ,           _,            _ ) : count_first();
@@ -323,8 +323,8 @@ control dpa_counter( inout headers_t H, inout ingress_metadata_t M, in ingress_i
     const entries = {
       ( REC_PORT_PIPE_0 ,  _      , _     ,  _         ,            _ ) : pkt_count(RC);
       ( ANY_PORT_PIPE_0 ,  P_INPUT, S_NEW ,           _,            _ ) : pkt_count(OK);
-      ( ANY_PORT_PIPE_0 ,  P_INPUT, S_EXP ,  W_NOT_SEEN, T_NO_TIMEOUT ) : pkt_count(OK);
-      ( ANY_PORT_PIPE_0 ,  P_INPUT, S_EXP ,  W_NOT_SEEN,    T_TIMEOUT ) : pkt_count(OK_TIMEOUT);
+      ( ANY_PORT_PIPE_0 ,  P_INPUT, S_EXP ,  W_UNSEEN, T_NO_TIMEOUT ) : pkt_count(OK);
+      ( ANY_PORT_PIPE_0 ,  P_INPUT, S_EXP ,  W_UNSEEN,    T_TIMEOUT ) : pkt_count(OK_TIMEOUT);
       ( ANY_PORT_PIPE_0 ,  P_INPUT, S_EXP ,      W_SEEN, T_NO_TIMEOUT ) : pkt_count(RE);
       ( ANY_PORT_PIPE_0 ,  P_INPUT, S_EXP ,      W_SEEN,    T_TIMEOUT ) : pkt_count(RE_TIMEOUT);
       ( ANY_PORT_PIPE_0 ,  P_INPUT, S_OLD ,           _,            _ ) : pkt_count(OL);
@@ -334,8 +334,8 @@ control dpa_counter( inout headers_t H, inout ingress_metadata_t M, in ingress_i
 
       ( REC_PORT_PIPE_1 ,  _      , _     ,  _         ,            _ ) : pkt_count(1 * DPA_NUM_COUNTERS + RC);
       ( ANY_PORT_PIPE_1 ,  P_INPUT, S_NEW ,           _,            _ ) : pkt_count(1 * DPA_NUM_COUNTERS + OK);
-      ( ANY_PORT_PIPE_1 ,  P_INPUT, S_EXP ,  W_NOT_SEEN, T_NO_TIMEOUT ) : pkt_count(1 * DPA_NUM_COUNTERS + OK);
-      ( ANY_PORT_PIPE_1 ,  P_INPUT, S_EXP ,  W_NOT_SEEN,    T_TIMEOUT ) : pkt_count(1 * DPA_NUM_COUNTERS + OK_TIMEOUT);
+      ( ANY_PORT_PIPE_1 ,  P_INPUT, S_EXP ,  W_UNSEEN, T_NO_TIMEOUT ) : pkt_count(1 * DPA_NUM_COUNTERS + OK);
+      ( ANY_PORT_PIPE_1 ,  P_INPUT, S_EXP ,  W_UNSEEN,    T_TIMEOUT ) : pkt_count(1 * DPA_NUM_COUNTERS + OK_TIMEOUT);
       ( ANY_PORT_PIPE_1 ,  P_INPUT, S_EXP ,      W_SEEN, T_NO_TIMEOUT ) : pkt_count(1 * DPA_NUM_COUNTERS + RE);
       ( ANY_PORT_PIPE_1 ,  P_INPUT, S_EXP ,      W_SEEN,    T_TIMEOUT ) : pkt_count(1 * DPA_NUM_COUNTERS + RE_TIMEOUT);
       ( ANY_PORT_PIPE_1 ,  P_INPUT, S_OLD ,           _,            _ ) : pkt_count(1 * DPA_NUM_COUNTERS + OL);
@@ -345,8 +345,8 @@ control dpa_counter( inout headers_t H, inout ingress_metadata_t M, in ingress_i
 
       ( REC_PORT_PIPE_2 ,  _      , _     ,  _         ,            _ ) : pkt_count(2 * DPA_NUM_COUNTERS + RC);
       ( ANY_PORT_PIPE_2 ,  P_INPUT, S_NEW ,           _,            _ ) : pkt_count(2 * DPA_NUM_COUNTERS + OK);
-      ( ANY_PORT_PIPE_2 ,  P_INPUT, S_EXP ,  W_NOT_SEEN, T_NO_TIMEOUT ) : pkt_count(2 * DPA_NUM_COUNTERS + OK);
-      ( ANY_PORT_PIPE_2 ,  P_INPUT, S_EXP ,  W_NOT_SEEN,    T_TIMEOUT ) : pkt_count(2 * DPA_NUM_COUNTERS + OK_TIMEOUT);
+      ( ANY_PORT_PIPE_2 ,  P_INPUT, S_EXP ,  W_UNSEEN, T_NO_TIMEOUT ) : pkt_count(2 * DPA_NUM_COUNTERS + OK);
+      ( ANY_PORT_PIPE_2 ,  P_INPUT, S_EXP ,  W_UNSEEN,    T_TIMEOUT ) : pkt_count(2 * DPA_NUM_COUNTERS + OK_TIMEOUT);
       ( ANY_PORT_PIPE_2 ,  P_INPUT, S_EXP ,      W_SEEN, T_NO_TIMEOUT ) : pkt_count(2 * DPA_NUM_COUNTERS + RE);
       ( ANY_PORT_PIPE_2 ,  P_INPUT, S_EXP ,      W_SEEN,    T_TIMEOUT ) : pkt_count(2 * DPA_NUM_COUNTERS + RE_TIMEOUT);
       ( ANY_PORT_PIPE_2 ,  P_INPUT, S_OLD ,           _,            _ ) : pkt_count(2 * DPA_NUM_COUNTERS + OL);
@@ -356,8 +356,8 @@ control dpa_counter( inout headers_t H, inout ingress_metadata_t M, in ingress_i
 
       ( REC_PORT_PIPE_3 ,  _      , _     ,  _         ,            _ ) : pkt_count(3 * DPA_NUM_COUNTERS + RC);
       ( ANY_PORT_PIPE_3 ,  P_INPUT, S_NEW ,           _,            _ ) : pkt_count(3 * DPA_NUM_COUNTERS + OK);
-      ( ANY_PORT_PIPE_3 ,  P_INPUT, S_EXP ,  W_NOT_SEEN, T_NO_TIMEOUT ) : pkt_count(3 * DPA_NUM_COUNTERS + OK);
-      ( ANY_PORT_PIPE_3 ,  P_INPUT, S_EXP ,  W_NOT_SEEN,    T_TIMEOUT ) : pkt_count(3 * DPA_NUM_COUNTERS + OK_TIMEOUT);
+      ( ANY_PORT_PIPE_3 ,  P_INPUT, S_EXP ,  W_UNSEEN, T_NO_TIMEOUT ) : pkt_count(3 * DPA_NUM_COUNTERS + OK);
+      ( ANY_PORT_PIPE_3 ,  P_INPUT, S_EXP ,  W_UNSEEN,    T_TIMEOUT ) : pkt_count(3 * DPA_NUM_COUNTERS + OK_TIMEOUT);
       ( ANY_PORT_PIPE_3 ,  P_INPUT, S_EXP ,      W_SEEN, T_NO_TIMEOUT ) : pkt_count(3 * DPA_NUM_COUNTERS + RE);
       ( ANY_PORT_PIPE_3 ,  P_INPUT, S_EXP ,      W_SEEN,    T_TIMEOUT ) : pkt_count(3 * DPA_NUM_COUNTERS + RE_TIMEOUT);
       ( ANY_PORT_PIPE_3 ,  P_INPUT, S_OLD ,           _,            _ ) : pkt_count(3 * DPA_NUM_COUNTERS + OL);

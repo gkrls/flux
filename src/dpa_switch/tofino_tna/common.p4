@@ -277,10 +277,10 @@ header dpa_payload_h {
 #define C_COMPLETE_EARLIER MATCH_NEG_i8
 #define C_COMPLETE_NOW     MATCH_POS_i8
 
-#define T_TIMEOUT    1
 #define T_NO_TIMEOUT 0
-#define W_SEEN       _
+#define T_TIMEOUT    1
 #define W_NOT_SEEN   0
+#define W_SEEN       _
 #define P_NONE       dpa_pkt.NONE
 #define P_BAD        dpa_pkt.BAD
 #define P_SYN        dpa_pkt.SYN

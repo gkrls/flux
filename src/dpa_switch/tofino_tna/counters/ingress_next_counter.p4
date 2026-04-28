@@ -33,23 +33,23 @@
     const default_action = count_other;
     const size = 32;
     const entries = {
-      ( _  , ANY_PORT_PIPE_0,   P_BAD,     _,          _, _                ) : count_bad_other();
+      ( _  , ANY_PORT_PIPE_0,   P_BAD,     _,        _, _                 ) : count_bad_other();
 
-      ( _  , ANY_PORT_PIPE_0, P_INPUT, S_OLD, W_NOT_SEEN, C_INCOMPLETE     ) : count_old_incomplete();
-      ( _  , ANY_PORT_PIPE_0, P_INPUT, S_OLD, W_NOT_SEEN, _                ) : count_old_complete(); // guard for entry below
-      ( _  , ANY_PORT_PIPE_0, P_INPUT, S_OLD,     W_SEEN, _                ) : count_bad_input_old_seen();
+      ( _  , ANY_PORT_PIPE_0, P_INPUT, S_OLD, W_UNSEEN, C_INCOMPLETE      ) : count_old_incomplete();
+      ( _  , ANY_PORT_PIPE_0, P_INPUT, S_OLD, W_UNSEEN, _                 ) : count_old_complete(); // guard for entry below
+      ( _  , ANY_PORT_PIPE_0, P_INPUT, S_OLD,   W_SEEN, _                 ) : count_bad_input_old_seen();
 
-      ( _  , ANY_PORT_PIPE_0, P_INPUT, S_EXP,          _, _                ) : count_exp();
-      ( _  , ANY_PORT_PIPE_0, P_INPUT, S_NEW,          _, _                ) : count_new(); 
-      ( _  , ANY_PORT_PIPE_0, P_INPUT,  S_HI, W_NOT_SEEN, _                ) : count_bad_input_hi_unseen();
-      ( _  , ANY_PORT_PIPE_0, P_INPUT,  S_HI,     W_SEEN, _                ) : count_bad_input_hi_seen();
+      ( _  , ANY_PORT_PIPE_0, P_INPUT, S_EXP,        _, _                 ) : count_exp();
+      ( _  , ANY_PORT_PIPE_0, P_INPUT, S_NEW,        _, _                 ) : count_new(); 
+      ( _  , ANY_PORT_PIPE_0, P_INPUT,  S_HI, W_UNSEEN, _                 ) : count_bad_input_hi_unseen();
+      ( _  , ANY_PORT_PIPE_0, P_INPUT,  S_HI,   W_SEEN, _                 ) : count_bad_input_hi_seen();
 
-      ( _  , ANY_PORT_PIPE_0,   P_SYN, S_EXP,         _, C_INCOMPLETE      ) : count_syn_incomplete();
-      ( _  , ANY_PORT_PIPE_0,   P_SYN, S_OLD,         _, C_INCOMPLETE      ) : count_syn_incomplete();
-      ( _  , ANY_PORT_PIPE_0,   P_SYN, S_EXP,         _, C_COMPLETE_EARLIER) : count_syn_complete();
-      ( _  , ANY_PORT_PIPE_0,   P_SYN, S_OLD,         _, C_COMPLETE_EARLIER) : count_syn_complete();
-      ( _  , ANY_PORT_PIPE_0,   P_SYN, _    ,         _, C_COMPLETE_NOW    ) : count_bad_syn_complete_now();
-      ( _  , ANY_PORT_PIPE_0,   P_SYN, S_HI ,         _, _                 ) : count_bad_syn_hi();
+      ( _  , ANY_PORT_PIPE_0,   P_SYN, S_EXP,        _, C_INCOMPLETE      ) : count_syn_incomplete();
+      ( _  , ANY_PORT_PIPE_0,   P_SYN, S_OLD,        _, C_INCOMPLETE      ) : count_syn_incomplete();
+      ( _  , ANY_PORT_PIPE_0,   P_SYN, S_EXP,        _, C_COMPLETE_EARLIER) : count_syn_complete();
+      ( _  , ANY_PORT_PIPE_0,   P_SYN, S_OLD,        _, C_COMPLETE_EARLIER) : count_syn_complete();
+      ( _  , ANY_PORT_PIPE_0,   P_SYN, _    ,        _, C_COMPLETE_NOW    ) : count_bad_syn_complete_now();
+      ( _  , ANY_PORT_PIPE_0,   P_SYN, S_HI ,        _, _                 ) : count_bad_syn_hi();
       
     }
   }
