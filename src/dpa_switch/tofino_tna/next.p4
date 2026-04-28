@@ -240,8 +240,8 @@ control dpa_next( inout headers_t H, inout ingress_metadata_t M,
       ( _  , ANY_PORT_PIPE_0,   P_SYN   , S_HI   , _          , _                  ) : unicast_bad(); // this should definitely never happen
 
       /// For bad and old packets we also unicast immediately (i think its safe)
-      ( _  , ANY_PORT_PIPE_0, P_INPUT   , S_OLD  ,  W_NOT_SEEN, C_INCOMPLETE       ) : unicast_old_incomplete();   // this will cause the worker to enter SYN
-      ( _  , ANY_PORT_PIPE_0, P_INPUT   , S_OLD  ,  W_NOT_SEEN, _                  ) : unicast_old_complete();     // this CAN be used by the worker as implicit SYN
+      ( _  , ANY_PORT_PIPE_0, P_INPUT   , S_OLD  ,  W_UNSEEN, C_INCOMPLETE       ) : unicast_old_incomplete();   // this will cause the worker to enter SYN
+      ( _  , ANY_PORT_PIPE_0, P_INPUT   , S_OLD  ,  W_UNSEEN, _                  ) : unicast_old_complete();     // this CAN be used by the worker as implicit SYN
       ( _  , ANY_PORT_PIPE_0, P_INPUT   , S_OLD  ,      W_SEEN, _                  ) : unicast_bad_2(); //NoAction(); // drop();
 
 #if DPA_REDUCER_MODE == DPA_REDUCER_SINGLE
