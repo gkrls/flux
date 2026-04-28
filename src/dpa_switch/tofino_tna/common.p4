@@ -89,14 +89,6 @@ header udp_h {
   bit<16> checksum;
 }
 
-// #ifdef DPA_UDP_PORT
-// const udp_port_t _dpa_udp_port = DPA_UDP_PORT;
-// #undef DPA_UDP_PORT
-// const udp_port_t DPA_UDP_PORT = _dpa_udp_port;
-// #else
-// const udp_port_t DPA_UDP_PORT = 4242;
-// #endif
-
 // ----------------------------------------------------------------------------
 // DPA
 // ----------------------------------------------------------------------------
@@ -162,14 +154,13 @@ struct dpa_dflags_t {
 }
 
 struct dpa_flags_t {
-  bit<1> bad;
-  bit<1> old;
-  bit<1> u1; // re
-  bit<1> u2; // use for egress dropsim
-  bit<1> syn;
-  bit<1> cntk;
-  bit<2> pipes;   // 0: 1-pipe, 1: 2-pipe, ...
-  // dpa_dflags_t d;
+  bit<1> bad;   // bad packet: e.g. old seqnum + seen in current seqnum (only set by the switch)
+  bit<1> old;   // old seqnum
+  bit<1> u1;    // unused 1: currently set to 1 by the switch when it unicasts a complete slot, i.e. a retransmission
+  bit<1> u2;    // unused 2: currently only used internally for drop simulation
+  bit<1> syn;   // syn packet: incoming -> worker tries sync, outgoing -> either response to syn or old seqnum but slot on reused yet
+  bit<1> cntk;  // count-to-k: only set/cleared by workers. when set the switch only counts to k, even for normal packets
+  bit<2> pipes; // number of pipes to use 0: 1 pipes, 1: 2 pipes, etc. This should be the same for all packets in a give allreduce op
 }
 
 struct dpa_world_t {
@@ -184,15 +175,22 @@ struct dpa_qvcnt_t {
 
 // typedef bit<8> dpa_vcnt_t;
 
+// We have 32 bits of space for quantization purposes in the dpa header
+// We currently use it for up to 4 1-byte exponents.
+// We could also use it for a single 32-bit scaling factor istead. This 
+// is not currently implemented, but all we have to do is:
+//   1. Add a 32-bit max reducer
+//   2. Compile time selection of the reducer implementation
+// We can also use a static scaling factor (like ATP) and forget about
+// this field completely.
 struct dpa_quant_t {
-  // For exponent-based quantization this is a struct
-  // of 4 exponents
   dpa_exponent_t q3;
   dpa_exponent_t q2;
   dpa_exponent_t q1;
   dpa_exponent_t q0;
 }
 
+// The main dpa header
 header dpa_h {
   bit<32> session;     // 32 bits
   bit<32> opid;        // 32 bits - unused by device
@@ -207,6 +205,10 @@ header dpa_h {
   dpa_quant_t quant;   // 32 bits
 }
 
+// This header stores packet payload and should be as big as the number
+// or reducers per pipe. When in dual mode (each reducer does 2 values)
+// one dpa_payload_h header counts for half the payload. We use a second
+// one for the other half
 header dpa_payload_h {
 #if DPA_REDUCERS == 1
   dpa_value_t v00;
@@ -236,19 +238,6 @@ header dpa_payload_h {
 #endif
 }
 
-
-
-// Helper macros
-
-
-
-#define NET_METADATA_INIT(m) \
-  m.ip_checksum_error = false;     \
-  m.ip_checksum_compute = false;   \
-  m.icmp_checksum_compute = false; \
-  m.icmp_checksum_pre = 0;
-
-
 // It is absolutely important that MATCH_ZER/MATCH_ONE are checked BEFORE MATCH_POS
 // The reason is that MATCH_POS only checks if the sign bit is 0, but MATCH_ZER/ONE
 // are whole bitstrings that start with 0 and end with 0/1 respectivelly. Thus they
@@ -263,10 +252,6 @@ header dpa_payload_h {
 #define MATCH_POS_i32    32w0x00000000 &&& 32w0x80000000
 #define MATCH_NEG_i32    32w0x80000000 &&& 32w0x80000000
 
-
-
-// enum dpa_seq_t dpa_seq { EXP = 0x0, NEW = 0x1, BAD = 0xbad, OLD = 0xffffffff }
-// #define S_NEW        MATCH_POS_i32 //dpa_seq.NEW
 #define S_OLD        MATCH_NEG_i32 //dpa_seq.OLD
 #define S_EXP        MATCH_ZER_i32 //dpa_seq.EXP
 #define S_NEW        MATCH_ONE_i32
@@ -279,7 +264,7 @@ header dpa_payload_h {
 
 #define T_NO_TIMEOUT 0
 #define T_TIMEOUT    1
-#define W_NOT_SEEN   0
+#define W_UNSEEN     0
 #define W_SEEN       _
 #define P_NONE       dpa_pkt.NONE
 #define P_BAD        dpa_pkt.BAD
@@ -298,19 +283,25 @@ struct net_metadata_t {
   bit<16> icmp_checksum_pre;
 }
 
+#define NET_METADATA_INIT(m) \
+  m.ip_checksum_error = false;     \
+  m.ip_checksum_compute = false;   \
+  m.icmp_checksum_compute = false; \
+  m.icmp_checksum_pre = 0;
+
 @flexible
 struct ingress_metadata_t {
   dpa_metadata_h dpa;
   net_metadata_t net;
 }
 
-@flexible
-struct egress_metadata_t {
-}
-
 #define INGRESS_METADATA_INIT(m) \
   DPA_METADATA_INIT(m.dpa)       \
   NET_METADATA_INIT(m.net)
+
+@flexible
+struct egress_metadata_t {
+}
 
 #define EGRESS_METADATA_INIT(m) \
   DPA_METADATA_INIT(m.dpa)
