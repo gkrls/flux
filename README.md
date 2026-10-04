@@ -20,21 +20,37 @@ Requires an NVIDIA GPU with working drivers and any NVIDIA/Mellanox NIC supporte
 `vfio-pci` devices should work but we haven't tried.
 
 ```bash
-# system packages
+# System packages
 sudo apt install -y build-essential cmake pkg-config python3-venv linux-headers-$(uname -r)
 
-# DOCA host (NVIDIA/Mellanox NICs), includes DPDK
-
-# The following was tested on Ubuntu 24.04. Check https://developer.nvidia.com/doca for your platform
+# Networking. The following was tested on Ubuntu 24.04. Check https://developer.nvidia.com/doca for your platform
 wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.0.0/host/doca-host_3.0.0-058000-25.04-ubuntu2404_amd64.deb
-sudo dpkg -i doca-host_*.deb
-sudo apt-get update
-sudo apt-get -y install doca-networking
+sudo dpkg -i doca-host_*.deb && sudo apt-get update && sudo apt-get -y install doca-networking
 echo 'export PKG_CONFIG_PATH=/opt/mellanox/dpdk/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH' >> ~/.bashrc
 source ~/.bashrc
 ```
+For custom DPDK: `echo 'export PKG_CONFIG_PATH=/path/to/your/dpdk/lib/pkgconfig:$PKG_CONFIG_PATH' >> ~/.bashrc`
 
-If you use a custom DPDK please run `export PKG_CONFIG_PATH=/path/to/your/dpdk/lib/pkgconfig:$PKG_CONFIG_PATH`
+The system was evaluated with Driver Version: **560.28.03**, and CUDA Version: **12.6**. While newer ones
+*should* work, we cannot guarantee compatibility, especially with the (currently) pinned Pytorch version. 
+To downgrade the driver/cuda try: 
+```bash
+cd /tmp
+wget -c https://developer.download.nvidia.com/compute/cuda/12.6.0/local_installers/cuda-repo-ubuntu2404-12-6-local_12.6.0-560.28.03-1_amd64.deb
+sudo dpkg -i cuda-repo-ubuntu2404-12-6-local_12.6.0-560.28.03-1_amd64.deb
+sudo cp /var/cuda-repo-ubuntu2404-12-6-local/cuda-*-keyring.gpg /usr/share/keyrings/
+sudo apt-get update && sudo ubuntu-drivers install --include-dkms nvidia:560
+
+# remove previous CUDA toolkit and install 12.6:
+sudo apt purge -y nvidia-cuda-toolkit && sudo apt install -y cuda-toolkit-12-6=12.6.0-1
+sudo update-alternatives --install /usr/local/cuda cuda /usr/local/cuda-12.6 126 && sudo update-alternatives --set cuda /usr/local/cuda-12.6
+```
+You probaly also want to export `CUDA_HOME` and put CUDA tools in path (Torch plugin only tested to compile with `CUDA_HOME`):
+```bash
+printf '%s\n' '# CUDA 12.6' 'export CUDA_HOME=/usr/local/cuda' 'export PATH=/usr/local/cuda/bin:$PATH' 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}' | sudo tee /etc/profile.d/cuda.sh >/dev/null
+sudo chmod 644 /etc/profile.d/cuda.sh && source /etc/profile.d/cuda.sh && hash -r
+```
+
 
 When you are done please run the following. If no errors, you are good to go:
 ```bash
