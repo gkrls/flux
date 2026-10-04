@@ -21,7 +21,7 @@ Requires an NVIDIA GPU with working drivers and any NVIDIA/Mellanox NIC supporte
 
 ```bash
 # System packages
-sudo apt install -y build-essential cmake pkg-config python3-venv linux-headers-$(uname -r)
+sudo apt install -y build-essential cmake pkg-config net-tools python3-pip python3-venv linux-headers-$(uname -r)
 
 # Networking. The following was tested on Ubuntu 24.04. Check https://developer.nvidia.com/doca for your platform
 wget https://www.mellanox.com/downloads/DOCA/DOCA_v3.0.0/host/doca-host_3.0.0-058000-25.04-ubuntu2404_amd64.deb
